@@ -1,0 +1,13 @@
+# Intentional error for Day 8. This PVC should remain Pending.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: missing-class
+  namespace: ceph-lab
+spec:
+  storageClassName: does-not-exist
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi

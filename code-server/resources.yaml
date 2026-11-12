@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: code-server
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: code-server-workspace
+  namespace: code-server
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: qks-block
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-server
+  namespace: code-server
+spec:
+  selector:
+    app: code-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-server
+  namespace: code-server
+  labels:
+    app: code-server
+spec:
+  replicas: 1
+  # Avoid concurrent Pods mounting the same ReadWriteOnce volume on different nodes.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: code-server
+  template:
+    metadata:
+      labels:
+        app: code-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: code-server
+          # Pin the image already pulled by this cluster for reproducible deployments.
+          image: codercom/code-server@sha256:09565f9e07f5624554e295e8bab0e2fec4a7c533eb3cff459ed6596a4d3d7c1c
+          imagePullPolicy: IfNotPresent
+          workingDir: /home/coder
+          args:
+            - --bind-addr=0.0.0.0:8080
+            - --auth=password
+            - --user-data-dir=/home/coder/.local/share/code-server
+            - --extensions-dir=/home/coder/.local/share/code-server/extensions
+            - /home/coder
+          env:
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: code-server-auth
+                  key: PASSWORD
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          # A TCP check avoids restarting an otherwise healthy idle editor session.
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: workspace
+              mountPath: /home/coder
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: code-server-workspace
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: code-server
+  namespace: code-server
+spec:
+  parentRefs:
+    - name: qks-workload-gw
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - vscode.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: code-server
+          port: 80

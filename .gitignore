@@ -1,0 +1,10 @@
+.DS_Store
+*kubeconfig*
+.env
+.env.*
+*.key
+*.keyring
+*.pem
+# Local backups and temporary files
+*.backup*
+*.tmp
